@@ -239,6 +239,10 @@ Additional options are:
   - use `opt>=n` to match at least `<n>` and `opt<=n` to match at most `<n>`
 - `invert` : invert all bits
 - `reflect` : reflect each byte (MSB first to MSB last)
+- `decode_uart` : UART 8n1 (10-to-8) decode
+- `decode_dm` : Differential Manchester decode
+- `decode_mc` : Manchester decode
+- `trim_leading` : remove leading 0xFF or 0x00 bytes after line coding
 - `match=<bits>` : only match if the `<bits>` are found
 - `preamble=<bits>` : match and align at the `<bits>` preamble.
   - `<bits>` is a row spec of `{<bit count>}<bits as hex number>`

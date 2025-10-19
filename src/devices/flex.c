@@ -13,6 +13,7 @@
 #include "optparse.h"
 #include "fatal.h"
 #include <stdlib.h>
+#include <string.h>
 
 static inline int bit(const uint8_t *bytes, unsigned b)
 {
@@ -99,6 +100,7 @@ struct flex_params {
     unsigned decode_uart;
     unsigned decode_dm;
     unsigned decode_mc;
+    unsigned trim_leading;
     char const *fields[7 + GETTER_SLOTS + 1]; // NOTE: needs to match output_fields
 };
 
@@ -271,6 +273,40 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
         }
     }
 
+    // Trim leading 0xFF or 0x00 bytes
+    if (params->trim_leading) {
+        for (i = 0; i < bitbuffer->num_rows; i++) {
+            unsigned byte_count = (bitbuffer->bits_per_row[i] + 7) / 8;
+            if (byte_count == 0)
+                continue;
+            
+            // Check if we should trim 0xFF or 0x00
+            uint8_t trim_byte = bitbuffer->bb[i][0];
+            if (trim_byte != 0xFF && trim_byte != 0x00)
+                continue;
+            
+            // Count leading bytes to trim
+            unsigned trim_count = 0;
+            while (trim_count < byte_count && bitbuffer->bb[i][trim_count] == trim_byte) {
+                trim_count++;
+            }
+            
+            // Don't trim all bytes - leave at least one byte if the entire buffer is the same byte
+            if (trim_count >= byte_count)
+                trim_count = byte_count - 1;
+            
+            // Shift the buffer
+            if (trim_count > 0 && trim_count < byte_count) {
+                unsigned remaining_bytes = byte_count - trim_count;
+                memmove(bitbuffer->bb[i], bitbuffer->bb[i] + trim_count, remaining_bytes);
+                // Clear the end of the buffer
+                memset(bitbuffer->bb[i] + remaining_bytes, 0, trim_count);
+                // Update bit count
+                bitbuffer->bits_per_row[i] -= trim_count * 8;
+            }
+        }
+    }
+
     decoder_log_bitbuffer(decoder, 1, params->name, bitbuffer, "");
 
     // discard duplicates
@@ -421,6 +457,7 @@ static void help(void)
             "\tdecode_uart : UART 8n1 (10-to-8) decode\n"
             "\tdecode_dm : Differential Manchester decode\n"
             "\tdecode_mc : Manchester decode\n"
+            "\ttrim_leading : remove leading 0xFF or 0x00 bytes after line coding\n"
             "\tmatch=<bits> : only match if the <bits> are found\n"
             "\tpreamble=<bits> : match and align at the <bits> preamble\n"
             "\t\t<bits> is a row spec of {<bit count>}<bits as hex number>\n"
@@ -733,6 +770,9 @@ r_device *flex_create_device(char *spec)
             params->decode_dm = parse_atoiv(val, 1, "decode_dm: ");
         else if (!strcasecmp(key, "decode_mc"))
             params->decode_mc = parse_atoiv(val, 1, "decode_mc: ");
+
+        else if (!strcasecmp(key, "trim_leading"))
+            params->trim_leading = parse_atoiv(val, 1, "trim_leading: ");
 
         else if (!strcasecmp(key, "symbol_zero"))
             params->symbol_zero = parse_symbol(val);

@@ -1,35 +1,37 @@
 # Contributing guidelines
 
-The rtl_433 project is built on the work of many contributors analyzing,
-documenting, and coding device support.
-We are happy to accept your contribution of yet another sensor!
+The rtl_433 project is focused on TPMS (Tire Pressure Monitoring System) decoders.
+The project is built on the work of many contributors analyzing,
+documenting, and coding TPMS device support.
+We are happy to accept your contribution of yet another TPMS decoder!
 
 Please check if your contribution is following these guidelines
 to improve the feedback loop and decrease the burden for the maintainers.
 
-## Adding a new decoder
+**Note:** This project specifically focuses on TPMS decoders. We maintain a few 
+system decoders (flex, generic_remote, generic_temperature_sensor, generic_motion, 
+and new_template) for framework purposes, but all other device types are out of scope.
 
-Decoders for new device protocols are welcome.
+## Adding a new TPMS decoder
+
+TPMS (Tire Pressure Monitoring System) decoders for new vehicle protocols are welcome.
 You need to know some C and register the decoder with one line, the rest is automatic.
 
-To get started follow these steps to add a new decoder:
+To get started follow these steps to add a new TPMS decoder:
 - Clone the repo and create a feature branch.  
-  E.g. Clone in Github, checkout and then `git checkout -b feat-mydevice`
-- Copy some decoder as template, either one that is already close to what you need or `src/devices/new_template.c`.  
-  E.g. `cp src/devices/new_template.c src/devices/my_device.c`
+  E.g. Clone in Github, checkout and then `git checkout -b feat-tpms-mydevice`
+- Copy an existing TPMS decoder as template or use `src/devices/new_template.c`.  
+  E.g. `cp src/devices/tpms_ford.c src/devices/tpms_mydevice.c`
 - Change the new decoder (at least the `r_device` name and `.disabled = 0`).  
-  E.g. change `r_device const new_template =` to `r_device const my_device =`,
-  and `new_template_decode` to `my_device_decode`,
-  and `.disabled = 3` to `.disabled = 0`
+  E.g. change `r_device const tpms_ford =` to `r_device const tpms_mydevice =`,
+  and `tpms_ford_decode` to `tpms_mydevice_decode`,
+  and `.disabled = 3` to `.disabled = 0` (if it was disabled)
 - Edit `include/rtl_433_devices.h`  
-  E.g. add `DECL(my_device) \`
+  E.g. add `DECL(tpms_mydevice) \`
 - Add your files with Git (no need to commit yet)  
-  E.g. `git add src/devices/my_device.c include/rtl_433_devices.h`
-- Run `./maintainer_update.py` to add the CMake compile rules
-- Compile, add files with Git again  
-  E.g. `git add src/CMakeLists.txt`
-- Code and test your decoder, try to follow our code style (you can generally use clang-format).
-- Run `./maintainer_update.py` again for the readme files.
+  E.g. `git add src/devices/tpms_mydevice.c include/rtl_433_devices.h`
+- Update `src/CMakeLists.txt` to add the new decoder file to the build
+- Compile and test your decoder, try to follow our code style (you can generally use clang-format).
 - Review and commit your changes, push the changes then create a PR.
 
 ## Commit messages
@@ -37,20 +39,20 @@ To get started follow these steps to add a new decoder:
 Pull-Requests (PR) will be added as squash commit
 and the commit message will likely be updated to follow this format.
 
-For general work, e.g. adding or changing decoders
+For general work, e.g. adding or changing TPMS decoders
 the commit messages should follow a format of
 
     <verb> [<decoder_model>] <commit_message>
 
 Verb must be one of the following:
 
-- `Add`: for new additions, e.g. device support
+- `Add`: for new additions, e.g. TPMS device support
 - `Fix`: for changes that don't change anything to input/output (security related or bug fixing)
 - `Remove`: for changes that remove behaviour (e.g. some old algorithms are cleaned up)
 - `Change`: for changes that modify input/output behaviour (e.g. added checksums, preambles)
 - `Improve`: for improvements without changes in normal output/behaviour
 
-Don't prefix general work, e.g. adding a decoder should be `Add support for TheDevice`.
+Don't prefix general work, e.g. adding a TPMS decoder should be `Add support for Honda TPMS`.
 
 Other commit messages should follow the common format of
 
