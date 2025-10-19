@@ -93,6 +93,9 @@ struct flex_params {
     uint8_t match_bits[128];
     unsigned preamble_len;
     uint8_t preamble_bits[128];
+    int match_offset;
+    unsigned match_offset_len;
+    uint8_t match_offset_bits[128];
     uint32_t symbol_zero;
     uint32_t symbol_one;
     uint32_t symbol_sync;
@@ -307,6 +310,42 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
         }
     }
 
+    // Match at specific offset (from start if positive, from end if negative)
+    if (params->match_offset_len) {
+        match_count = 0;
+        for (i = 0; i < bitbuffer->num_rows; i++) {
+            int offset_bits;
+            // Calculate actual bit offset
+            if (params->match_offset >= 0) {
+                // Positive offset: match from start
+                offset_bits = params->match_offset;
+            } else {
+                // Negative offset: match from end
+                offset_bits = (int)bitbuffer->bits_per_row[i] + params->match_offset - (int)params->match_offset_len;
+            }
+            
+            // Check if offset is valid
+            if (offset_bits < 0 || offset_bits + params->match_offset_len > bitbuffer->bits_per_row[i]) {
+                continue;
+            }
+            
+            // Extract bits at offset and compare
+            int match = 1;
+            for (unsigned b = 0; b < params->match_offset_len; b++) {
+                if (bit(bitbuffer->bb[i], offset_bits + b) != bit(params->match_offset_bits, b)) {
+                    match = 0;
+                    break;
+                }
+            }
+            
+            if (match) {
+                match_count++;
+            }
+        }
+        if (!match_count)
+            return DECODE_FAIL_SANITY;
+    }
+
     decoder_log_bitbuffer(decoder, 1, params->name, bitbuffer, "");
 
     // discard duplicates
@@ -460,6 +499,8 @@ static void help(void)
             "\ttrim_leading : remove leading 0xFF or 0x00 bytes after line coding\n"
             "\tmatch=<bits> : only match if the <bits> are found\n"
             "\tpreamble=<bits> : match and align at the <bits> preamble\n"
+            "\tmatch_offset=<offset>@<bits> : only match if <bits> are found at <offset>\n"
+            "\t\t<offset> is bit position from start (positive) or from end (negative)\n"
             "\t\t<bits> is a row spec of {<bit count>}<bits as hex number>\n"
             "\tunique : suppress duplicate row output\n\n"
             "\tcountonly : suppress detailed row output\n\n"
@@ -757,6 +798,18 @@ r_device *flex_create_device(char *spec)
 
         else if (!strcasecmp(key, "preamble"))
             params->preamble_len = parse_bits(val, params->preamble_bits);
+
+        else if (!strcasecmp(key, "match_offset")) {
+            // Parse format: "offset@<bits>" where offset can be positive (from start) or negative (from end)
+            char *at_sign = strchr(val, '@');
+            if (!at_sign) {
+                fprintf(stderr, "Bad flex spec, match_offset requires format \"offset@bits\"!\n");
+                usage();
+            }
+            *at_sign = '\0';
+            params->match_offset = atoi(val);
+            params->match_offset_len = parse_bits(at_sign + 1, params->match_offset_bits);
+        }
 
         else if (!strcasecmp(key, "countonly"))
             params->count_only = parse_atoiv(val, 1, "countonly: ");
