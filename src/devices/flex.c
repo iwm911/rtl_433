@@ -104,6 +104,7 @@ struct flex_params {
     unsigned decode_dm;
     unsigned decode_mc;
     unsigned trim_leading;
+    unsigned min_bits_decode;
     char const *fields[7 + GETTER_SLOTS + 1]; // NOTE: needs to match output_fields
 };
 
@@ -274,6 +275,27 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
             memcpy(bitbuffer->bb[i], tmp.bb[0], (len + 7) / 8); // safe to write over: can only be shorter
             bitbuffer->bits_per_row[i] = len;
         }
+    }
+
+    // Filter by minimum length after line coding - remove rows that are too short
+    if (params->min_bits_decode) {
+        int write_idx = 0;
+        for (i = 0; i < bitbuffer->num_rows; i++) {
+            if (bitbuffer->bits_per_row[i] >= params->min_bits_decode) {
+                // Keep this row - copy it if we've skipped any
+                if (write_idx != i) {
+                    memcpy(bitbuffer->bb[write_idx], bitbuffer->bb[i], (bitbuffer->bits_per_row[i] + 7) / 8);
+                    bitbuffer->bits_per_row[write_idx] = bitbuffer->bits_per_row[i];
+                }
+                write_idx++;
+            }
+        }
+        // Update the number of rows to reflect filtered result
+        bitbuffer->num_rows = write_idx;
+        
+        // If no rows passed the filter, abort
+        if (bitbuffer->num_rows == 0)
+            return DECODE_ABORT_LENGTH;
     }
 
     // Trim leading 0xFF or 0x00 bytes
@@ -496,6 +518,7 @@ static void help(void)
             "\tdecode_uart : UART 8n1 (10-to-8) decode\n"
             "\tdecode_dm : Differential Manchester decode\n"
             "\tdecode_mc : Manchester decode\n"
+            "\tmin_bits_decode=<n> : filter results with less than <n> bits after line coding\n"
             "\ttrim_leading : remove leading 0xFF or 0x00 bytes after line coding\n"
             "\tmatch=<bits> : only match if the <bits> are found\n"
             "\tpreamble=<bits> : match and align at the <bits> preamble\n"
@@ -823,6 +846,9 @@ r_device *flex_create_device(char *spec)
             params->decode_dm = parse_atoiv(val, 1, "decode_dm: ");
         else if (!strcasecmp(key, "decode_mc"))
             params->decode_mc = parse_atoiv(val, 1, "decode_mc: ");
+
+        else if (!strcasecmp(key, "min_bits_decode"))
+            params->min_bits_decode = parse_atoiv(val, 0, "min_bits_decode: ");
 
         else if (!strcasecmp(key, "trim_leading"))
             params->trim_leading = parse_atoiv(val, 1, "trim_leading: ");
