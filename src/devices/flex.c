@@ -105,6 +105,7 @@ struct flex_params {
     unsigned decode_mc;
     unsigned trim_leading;
     unsigned min_bits_decode;
+    unsigned max_bits_decode;
     char const *fields[7 + GETTER_SLOTS + 1]; // NOTE: needs to match output_fields
 };
 
@@ -277,11 +278,23 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
         }
     }
 
-    // Filter by minimum length after line coding - remove rows that are too short
-    if (params->min_bits_decode) {
+    // Filter by length after line coding - remove rows that are too short or too long
+    if (params->min_bits_decode || params->max_bits_decode) {
         int write_idx = 0;
         for (i = 0; i < bitbuffer->num_rows; i++) {
-            if (bitbuffer->bits_per_row[i] >= params->min_bits_decode) {
+            int keep_row = 1;
+            
+            // Check minimum length
+            if (params->min_bits_decode && bitbuffer->bits_per_row[i] < params->min_bits_decode) {
+                keep_row = 0;
+            }
+            
+            // Check maximum length
+            if (params->max_bits_decode && bitbuffer->bits_per_row[i] > params->max_bits_decode) {
+                keep_row = 0;
+            }
+            
+            if (keep_row) {
                 // Keep this row - copy it if we've skipped any
                 if (write_idx != i) {
                     memcpy(bitbuffer->bb[write_idx], bitbuffer->bb[i], (bitbuffer->bits_per_row[i] + 7) / 8);
@@ -519,6 +532,7 @@ static void help(void)
             "\tdecode_dm : Differential Manchester decode\n"
             "\tdecode_mc : Manchester decode\n"
             "\tmin_bits_decode=<n> : filter results with less than <n> bits after line coding\n"
+            "\tmax_bits_decode=<n> : filter results with more than <n> bits after line coding\n"
             "\ttrim_leading : remove leading 0xFF or 0x00 bytes after line coding\n"
             "\tmatch=<bits> : only match if the <bits> are found\n"
             "\tpreamble=<bits> : match and align at the <bits> preamble\n"
@@ -849,6 +863,8 @@ r_device *flex_create_device(char *spec)
 
         else if (!strcasecmp(key, "min_bits_decode"))
             params->min_bits_decode = parse_atoiv(val, 0, "min_bits_decode: ");
+        else if (!strcasecmp(key, "max_bits_decode"))
+            params->max_bits_decode = parse_atoiv(val, 0, "max_bits_decode: ");
 
         else if (!strcasecmp(key, "trim_leading"))
             params->trim_leading = parse_atoiv(val, 1, "trim_leading: ");
