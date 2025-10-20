@@ -106,6 +106,7 @@ struct flex_params {
     unsigned trim_leading;
     unsigned min_bits_decode;
     unsigned max_bits_decode;
+    unsigned filter_unreasonable; // percentage threshold (0-100) to filter buffers with too many 0xF or 0x0
     char const *fields[7 + GETTER_SLOTS + 1]; // NOTE: needs to match output_fields
 };
 
@@ -141,6 +142,51 @@ static void render_getters(data_t *data, uint8_t *bits, struct flex_params *para
             data_int(data, getter->name, "", getter->format, val);
         }
     }
+}
+
+/**
+Check if buffer has too many 0xF or 0x0 nibbles.
+Returns 1 if buffer is unreasonable (should be filtered), 0 if reasonable.
+*/
+static int is_buffer_unreasonable(uint8_t *data, unsigned num_bits, unsigned threshold_percent)
+{
+    if (threshold_percent == 0 || num_bits == 0)
+        return 0; // filter disabled or empty buffer
+    
+    unsigned byte_count = (num_bits + 7) / 8;
+    unsigned nibble_count = (num_bits + 3) / 4;
+    unsigned f_count = 0;
+    unsigned zero_count = 0;
+    
+    // Count 0xF and 0x0 nibbles
+    for (unsigned i = 0; i < byte_count; i++) {
+        uint8_t byte = data[i];
+        uint8_t high_nibble = (byte >> 4) & 0x0F;
+        uint8_t low_nibble = byte & 0x0F;
+        
+        // Count high nibble
+        if (i * 2 < nibble_count) {
+            if (high_nibble == 0xF)
+                f_count++;
+            if (high_nibble == 0x0)
+                zero_count++;
+        }
+        
+        // Count low nibble (skip if it's beyond our bit count)
+        if (i * 2 + 1 < nibble_count) {
+            if (low_nibble == 0xF)
+                f_count++;
+            if (low_nibble == 0x0)
+                zero_count++;
+        }
+    }
+    
+    // Calculate percentage
+    unsigned f_percent = (f_count * 100) / nibble_count;
+    unsigned zero_percent = (zero_count * 100) / nibble_count;
+    
+    // Filter if either 0xF or 0x0 exceeds threshold
+    return (f_percent >= threshold_percent || zero_percent >= threshold_percent);
 }
 
 /**
@@ -345,6 +391,27 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
         }
     }
 
+    // Filter out unreasonable buffers with too many 0xF or 0x0 nibbles
+    if (params->filter_unreasonable) {
+        int write_idx = 0;
+        for (i = 0; i < bitbuffer->num_rows; i++) {
+            if (!is_buffer_unreasonable(bitbuffer->bb[i], bitbuffer->bits_per_row[i], params->filter_unreasonable)) {
+                // Keep this row - copy it if we've skipped any
+                if (write_idx != i) {
+                    memcpy(bitbuffer->bb[write_idx], bitbuffer->bb[i], (bitbuffer->bits_per_row[i] + 7) / 8);
+                    bitbuffer->bits_per_row[write_idx] = bitbuffer->bits_per_row[i];
+                }
+                write_idx++;
+            }
+        }
+        // Update the number of rows to reflect filtered result
+        bitbuffer->num_rows = write_idx;
+        
+        // If no rows passed the filter, abort
+        if (bitbuffer->num_rows == 0)
+            return DECODE_FAIL_SANITY;
+    }
+
     // Match at specific offset (from start if positive, from end if negative)
     if (params->match_offset_len) {
         match_count = 0;
@@ -533,6 +600,7 @@ static void help(void)
             "\tdecode_mc : Manchester decode\n"
             "\tmin_bits_decode=<n> : filter results with less than <n> bits after line coding\n"
             "\tmax_bits_decode=<n> : filter results with more than <n> bits after line coding\n"
+            "\tfilter_unreasonable=<n> : filter results with <n>%% or more 0xF or 0x0 nibbles (default 50)\n"
             "\ttrim_leading : remove leading 0xFF or 0x00 bytes after line coding\n"
             "\tmatch=<bits> : only match if the <bits> are found\n"
             "\tpreamble=<bits> : match and align at the <bits> preamble\n"
@@ -865,6 +933,9 @@ r_device *flex_create_device(char *spec)
             params->min_bits_decode = parse_atoiv(val, 0, "min_bits_decode: ");
         else if (!strcasecmp(key, "max_bits_decode"))
             params->max_bits_decode = parse_atoiv(val, 0, "max_bits_decode: ");
+
+        else if (!strcasecmp(key, "filter_unreasonable"))
+            params->filter_unreasonable = parse_atoiv(val, 50, "filter_unreasonable: ");
 
         else if (!strcasecmp(key, "trim_leading"))
             params->trim_leading = parse_atoiv(val, 1, "trim_leading: ");
