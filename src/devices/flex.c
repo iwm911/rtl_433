@@ -324,39 +324,6 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
         }
     }
 
-    // Filter by length after line coding - remove rows that are too short or too long
-    if (params->min_bits_decode || params->max_bits_decode) {
-        int write_idx = 0;
-        for (i = 0; i < bitbuffer->num_rows; i++) {
-            int keep_row = 1;
-            
-            // Check minimum length
-            if (params->min_bits_decode && bitbuffer->bits_per_row[i] < params->min_bits_decode) {
-                keep_row = 0;
-            }
-            
-            // Check maximum length
-            if (params->max_bits_decode && bitbuffer->bits_per_row[i] > params->max_bits_decode) {
-                keep_row = 0;
-            }
-            
-            if (keep_row) {
-                // Keep this row - copy it if we've skipped any
-                if (write_idx != i) {
-                    memcpy(bitbuffer->bb[write_idx], bitbuffer->bb[i], (bitbuffer->bits_per_row[i] + 7) / 8);
-                    bitbuffer->bits_per_row[write_idx] = bitbuffer->bits_per_row[i];
-                }
-                write_idx++;
-            }
-        }
-        // Update the number of rows to reflect filtered result
-        bitbuffer->num_rows = write_idx;
-        
-        // If no rows passed the filter, abort
-        if (bitbuffer->num_rows == 0)
-            return DECODE_ABORT_LENGTH;
-    }
-
     // Trim leading 0xFF or 0x00 bytes
     if (params->trim_leading) {
         for (i = 0; i < bitbuffer->num_rows; i++) {
@@ -389,6 +356,39 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
                 bitbuffer->bits_per_row[i] -= trim_count * 8;
             }
         }
+    }
+
+    // Filter by length after line coding - remove rows that are too short or too long
+    if (params->min_bits_decode || params->max_bits_decode) {
+        int write_idx = 0;
+        for (i = 0; i < bitbuffer->num_rows; i++) {
+            int keep_row = 1;
+            
+            // Check minimum length
+            if (params->min_bits_decode && bitbuffer->bits_per_row[i] < params->min_bits_decode) {
+                keep_row = 0;
+            }
+            
+            // Check maximum length
+            if (params->max_bits_decode && bitbuffer->bits_per_row[i] > params->max_bits_decode) {
+                keep_row = 0;
+            }
+            
+            if (keep_row) {
+                // Keep this row - copy it if we've skipped any
+                if (write_idx != i) {
+                    memcpy(bitbuffer->bb[write_idx], bitbuffer->bb[i], (bitbuffer->bits_per_row[i] + 7) / 8);
+                    bitbuffer->bits_per_row[write_idx] = bitbuffer->bits_per_row[i];
+                }
+                write_idx++;
+            }
+        }
+        // Update the number of rows to reflect filtered result
+        bitbuffer->num_rows = write_idx;
+        
+        // If no rows passed the filter, abort
+        if (bitbuffer->num_rows == 0)
+            return DECODE_ABORT_LENGTH;
     }
 
     // Filter out unreasonable buffers with too many 0xF or 0x0 nibbles
