@@ -76,6 +76,8 @@ struct flex_get {
 };
 
 #define GETTER_SLOTS 12
+#define MAX_SKIP_SYNC_WORDS 8
+#define MAX_SKIP_SYNC_BYTES 16
 
 struct flex_params {
     char *name;
@@ -107,6 +109,9 @@ struct flex_params {
     unsigned min_bits_decode;
     unsigned max_bits_decode;
     unsigned filter_unreasonable; // percentage threshold (0-100) to filter buffers with too many 0xF or 0x0
+    unsigned skip_sync_count; // number of sync words to skip
+    uint8_t skip_sync_words[MAX_SKIP_SYNC_WORDS][MAX_SKIP_SYNC_BYTES]; // sync words to skip
+    unsigned skip_sync_lengths[MAX_SKIP_SYNC_WORDS]; // length in bytes of each sync word
     char const *fields[7 + GETTER_SLOTS + 1]; // NOTE: needs to match output_fields
 };
 
@@ -412,6 +417,45 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
             return DECODE_FAIL_SANITY;
     }
 
+    // Skip sync words from the start of each row
+    if (params->skip_sync_count > 0) {
+        for (i = 0; i < bitbuffer->num_rows; i++) {
+            unsigned byte_count = (bitbuffer->bits_per_row[i] + 7) / 8;
+            if (byte_count == 0)
+                continue;
+            
+            // Check each possible sync word
+            for (unsigned s = 0; s < params->skip_sync_count; s++) {
+                unsigned sync_len = params->skip_sync_lengths[s];
+                
+                // Skip if the row is shorter than the sync word
+                if (byte_count < sync_len)
+                    continue;
+                
+                // Check if the row starts with this sync word
+                int match = 1;
+                for (unsigned b = 0; b < sync_len; b++) {
+                    if (bitbuffer->bb[i][b] != params->skip_sync_words[s][b]) {
+                        match = 0;
+                        break;
+                    }
+                }
+                
+                // If matched, remove the sync word from the start
+                if (match) {
+                    unsigned remaining_bytes = byte_count - sync_len;
+                    memmove(bitbuffer->bb[i], bitbuffer->bb[i] + sync_len, remaining_bytes);
+                    // Clear the end of the buffer
+                    memset(bitbuffer->bb[i] + remaining_bytes, 0, sync_len);
+                    // Update bit count
+                    bitbuffer->bits_per_row[i] -= sync_len * 8;
+                    // Only remove one sync word per row
+                    break;
+                }
+            }
+        }
+    }
+
     // Match at specific offset (from start if positive, from end if negative)
     if (params->match_offset_len) {
         match_count = 0;
@@ -602,6 +646,8 @@ static void help(void)
             "\tmax_bits_decode=<n> : filter results with more than <n> bits after line coding\n"
             "\tfilter_unreasonable=<n> : filter results with <n>%% or more 0xF or 0x0 nibbles (default 50)\n"
             "\ttrim_leading : remove leading 0xFF or 0x00 bytes after line coding\n"
+            "\tskip_sync=<hex>,<hex>,... : remove matching sync word from start of decoded buffer\n"
+            "\t\t<hex> is comma-separated hex bytes without 0x prefix (e.g. AA,BBCC,DD)\n"
             "\tmatch=<bits> : only match if the <bits> are found\n"
             "\tpreamble=<bits> : match and align at the <bits> preamble\n"
             "\tmatch_offset=<offset>@<bits> : only match if <bits> are found at <offset>\n"
@@ -939,6 +985,51 @@ r_device *flex_create_device(char *spec)
 
         else if (!strcasecmp(key, "trim_leading"))
             params->trim_leading = parse_atoiv(val, 1, "trim_leading: ");
+
+        else if (!strcasecmp(key, "skip_sync")) {
+            // Parse comma-separated hex sync words like "AA,BB,CCDD"
+            char *sync_str = strdup(val);
+            if (!sync_str)
+                FATAL_STRDUP("flex_create_device()");
+            
+            char *token = strtok(sync_str, ",");
+            while (token && params->skip_sync_count < MAX_SKIP_SYNC_WORDS) {
+                // Trim whitespace
+                while (*token == ' ') token++;
+                char *end = token + strlen(token) - 1;
+                while (end > token && *end == ' ') end--;
+                *(end + 1) = '\0';
+                
+                // Parse hex string into bytes
+                unsigned len = strlen(token);
+                if (len == 0 || len % 2 != 0) {
+                    fprintf(stderr, "Bad flex spec, skip_sync hex string must have even number of characters!\n");
+                    usage();
+                }
+                
+                unsigned byte_len = len / 2;
+                if (byte_len > MAX_SKIP_SYNC_BYTES) {
+                    fprintf(stderr, "Bad flex spec, skip_sync word too long (max %d bytes)!\n", MAX_SKIP_SYNC_BYTES);
+                    usage();
+                }
+                
+                for (unsigned b = 0; b < byte_len; b++) {
+                    char hex_byte[3] = {token[b * 2], token[b * 2 + 1], '\0'};
+                    char *endptr;
+                    unsigned long byte_val = strtoul(hex_byte, &endptr, 16);
+                    if (*endptr != '\0') {
+                        fprintf(stderr, "Bad flex spec, skip_sync invalid hex string!\n");
+                        usage();
+                    }
+                    params->skip_sync_words[params->skip_sync_count][b] = (uint8_t)byte_val;
+                }
+                params->skip_sync_lengths[params->skip_sync_count] = byte_len;
+                params->skip_sync_count++;
+                
+                token = strtok(NULL, ",");
+            }
+            free(sync_str);
+        }
 
         else if (!strcasecmp(key, "symbol_zero"))
             params->symbol_zero = parse_symbol(val);
