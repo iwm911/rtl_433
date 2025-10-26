@@ -646,8 +646,8 @@ static void help(void)
             "\tmax_bits_decode=<n> : filter results with more than <n> bits after line coding\n"
             "\tfilter_unreasonable=<n> : filter results with <n>%% or more 0xF or 0x0 nibbles (default 50)\n"
             "\ttrim_leading : remove leading 0xFF or 0x00 bytes after line coding\n"
-            "\tskip_sync=<hex>,<hex>,... : remove matching sync word from start of decoded buffer\n"
-            "\t\t<hex> is comma-separated hex bytes without 0x prefix (e.g. AA,BBCC,DD)\n"
+            "\tskip_sync=<hex>:<hex>:... : remove matching sync word from start of decoded buffer\n"
+            "\t\t<hex> is colon-separated hex bytes without 0x prefix (e.g. AA:BBCC:DD)\n"
             "\tmatch=<bits> : only match if the <bits> are found\n"
             "\tpreamble=<bits> : match and align at the <bits> preamble\n"
             "\tmatch_offset=<offset>@<bits> : only match if <bits> are found at <offset>\n"
@@ -987,12 +987,12 @@ r_device *flex_create_device(char *spec)
             params->trim_leading = parse_atoiv(val, 1, "trim_leading: ");
 
         else if (!strcasecmp(key, "skip_sync")) {
-            // Parse comma-separated hex sync words like "AA,BB,CCDD"
+            // Parse colon-separated hex sync words like "AA:BB:CCDD"
             char *sync_str = strdup(val);
             if (!sync_str)
                 FATAL_STRDUP("flex_create_device()");
             
-            char *token = strtok(sync_str, ",");
+            char *token = strtok(sync_str, ":");
             while (token && params->skip_sync_count < MAX_SKIP_SYNC_WORDS) {
                 // Trim whitespace
                 while (*token == ' ') token++;
@@ -1026,7 +1026,7 @@ r_device *flex_create_device(char *spec)
                 params->skip_sync_lengths[params->skip_sync_count] = byte_len;
                 params->skip_sync_count++;
                 
-                token = strtok(NULL, ",");
+                token = strtok(NULL, ":");
             }
             free(sync_str);
         }
