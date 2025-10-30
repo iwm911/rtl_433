@@ -180,13 +180,22 @@ Lastly the `-X` option can be used to add a custom flex decoder.
 This can be used with `-R 0` to disable all default decoders.
 E.g. `rtl_433 -R 0 -X "<spec>"` will only run your given custom decoder.
 
+You can also load multiple FLEX decoders from a text file by prefixing the file path with `@`:
+
+```
+rtl_433 -R 0 -X @/path/to/flex_decoders.txt
+```
+
+The file should contain one `<spec>` per line. Empty lines and lines starting with `#` are ignored.
+
 ## Flex Decoder
 
 A flexible general purpose decoder can be added with the `-X` option:
 
 ```
-  [-X <spec>] to add a flexible general purpose decoder.
+  [-X <spec> | @<file>] to add a flexible general purpose decoder.
       <spec> is "key=value[,key=value...]"
+      @<file> reads multiple specs from a text file (one per line, '#' comments allowed)
 ```
 Most common keys are:
 - `name=<name>` (or: `n=<name>`)

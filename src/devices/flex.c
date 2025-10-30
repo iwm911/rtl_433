@@ -594,7 +594,7 @@ static void help(void)
     fprintf(stderr,
             "\t\t= Flex decoder spec =\n"
             "Use -X <spec> to add a flexible general purpose decoder.\n\n"
-            "<spec> is \"key=value[,key=value...]\"\n"
+            "<spec> is \"key=value[,key=value...]\" or use -X @<file> to read one <spec> per line from a file.\n"
             "Common keys are:\n"
             "\tname=<name> (or: n=<name>)\n"
             "\tmodulation=<modulation> (or: m=<modulation>)\n"

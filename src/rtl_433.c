@@ -1207,8 +1207,34 @@ static void parse_conf_option(r_cfg_t *cfg, int opt, char *arg)
         if (!arg)
             flex_create_device(NULL);
 
-        flex_device = flex_create_device(arg);
-        register_protocol(cfg, flex_device, "");
+        if (*arg == '@') {
+            FILE *fp = fopen(&arg[1], "r");
+            if (!fp) {
+                fprintf(stderr, "Failed to open flex decoder file: %s\n", &arg[1]);
+                exit(1);
+            }
+            char line[INPUT_LINE_MAX];
+            while (fgets(line, INPUT_LINE_MAX, fp)) {
+                // trim leading whitespace
+                char *p = line;
+                while (*p == ' ' || *p == '\t') p++;
+                // skip comments and empty lines
+                if (*p == '\0' || *p == '\n' || *p == '#')
+                    continue;
+                // trim trailing whitespace/newline
+                char *e = p + strlen(p);
+                while (e > p && (e[-1] == '\r' || e[-1] == '\n' || e[-1] == ' ' || e[-1] == '\t'))
+                    *--e = '\0';
+                if (*p == '\0')
+                    continue;
+                flex_device = flex_create_device(p);
+                register_protocol(cfg, flex_device, "");
+            }
+            fclose(fp);
+        } else {
+            flex_device = flex_create_device(arg);
+            register_protocol(cfg, flex_device, "");
+        }
         break;
     case 'q':
         fprintf(stderr, "quiet option (-q) is default and deprecated. See -v to increase verbosity\n");
