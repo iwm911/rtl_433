@@ -105,10 +105,43 @@ static void R_API_CALLCONV print_json_double(data_output_t *output, double data,
 
 static void R_API_CALLCONV print_json_int(data_output_t *output, int data, char const *format)
 {
-    UNUSED(format);
     data_output_json_t *json = (data_output_json_t *)output;
 
-    fprintf(json->file, "%d", data);
+    // Check if format requests hex output (%x or %X)
+    // Look for 'x' or 'X' preceded by '%' to handle formats like %x, %X, %04x, %08X, etc.
+    int is_hex = 0;
+    if (format) {
+        const char *p = format;
+        while (*p) {
+            if (*p == '%' && (*(p+1) == 'x' || *(p+1) == 'X')) {
+                is_hex = 1;
+                break;
+            }
+            // Skip format specifiers: %[flags][width][.precision][length]
+            if (*p == '%') {
+                p++; // skip %
+                while (*p && strchr("-+ #0", *p)) p++; // flags
+                while (*p && (*p >= '0' && *p <= '9')) p++; // width
+                if (*p == '.') { p++; while (*p && (*p >= '0' && *p <= '9')) p++; } // precision
+                while (*p && strchr("hlLqjzt", *p)) p++; // length modifiers
+                if (*p == 'x' || *p == 'X') {
+                    is_hex = 1;
+                    break;
+                }
+            }
+            p++;
+        }
+    }
+
+    if (is_hex) {
+        // Format the hex value using the format string, then wrap in JSON string quotes
+        // This matches the KV output behavior which uses format directly
+        char hex_buf[64];
+        snprintf(hex_buf, sizeof(hex_buf), format, data);
+        fprintf(json->file, "\"%s\"", hex_buf);
+    } else {
+        fprintf(json->file, "%d", data);
+    }
 }
 
 static void R_API_CALLCONV data_output_json_print(data_output_t *output, data_t *data)
