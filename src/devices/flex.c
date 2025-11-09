@@ -95,6 +95,12 @@ struct flex_params {
     uint8_t match_bits[128];
     unsigned preamble_len;
     uint8_t preamble_bits[128];
+    unsigned preamble_pattern_len;        // Length of repetitive pattern in bits (0 = not used)
+    uint8_t preamble_pattern_bits[128];  // The pattern to search for (e.g., "110" = bits 1,1,0)
+    unsigned preamble_pattern_min_repeats; // Minimum number of repetitions required (must be >= 1)
+    unsigned preamble_pattern_max_repeats; // Maximum number of repetitions (0 = unlimited)
+    unsigned match_sync_len;
+    uint8_t match_sync_bits[128];
     int match_offset;
     unsigned match_offset_len;
     uint8_t match_offset_bits[128];
@@ -265,6 +271,87 @@ static int flex_callback(r_device *decoder, bitbuffer_t *bitbuffer)
                     r = i;
                 match_count++;
                 pos += params->preamble_len;
+                // TODO: refactor to bitbuffer_shift_row()
+                unsigned len = bitbuffer->bits_per_row[i] - pos;
+                bitbuffer_t tmp = {0};
+                bitbuffer_extract_bytes(bitbuffer, i, pos, tmp.bb[0], len);
+                memcpy(bitbuffer->bb[i], tmp.bb[0], (len + 7) / 8);
+                bitbuffer->bits_per_row[i] = len;
+            }
+        }
+        if (!match_count)
+            return DECODE_FAIL_SANITY;
+    }
+
+    // discard unless repetitive pattern match found
+    // This searches for a repetitive pattern (e.g., "110" repeated multiple times)
+    // Unlike the fixed preamble, this allows matching variable-length repetitive preambles.
+    // The search starts from the beginning and will skip any leading bits that don't match.
+    // After finding the pattern, it removes everything before and including all repetitions.
+    //
+    // Example: preamble_pattern=110:3 on signal "1110110110"
+    //   - Searches sequentially: position 0 ("111") doesn't match "110"
+    //   - Position 1 ("110") matches, finds 3 repetitions at positions 1, 4, 7
+    //   - Removes positions 0-9 (everything including all repetitions)
+    //   - Keeps only data after position 9
+    //
+    // This is useful for protocols like Somfy RTS which use repetitive patterns like "f0f0f0..."
+    if (params->preamble_pattern_len) {
+        r = -1;
+        match_count = 0;
+        for (i = 0; i < bitbuffer->num_rows; i++) {
+            unsigned pos = bitbuffer_search_repetitive_pattern(bitbuffer, i, 0,
+                    params->preamble_pattern_bits, params->preamble_pattern_len,
+                    params->preamble_pattern_min_repeats, params->preamble_pattern_max_repeats);
+            if (pos < bitbuffer->bits_per_row[i]) {
+                if (r < 0)
+                    r = i;
+                match_count++;
+                // Calculate how many repetitions we actually found
+                unsigned actual_repeats = 0;
+                unsigned test_pos = pos;
+                while (test_pos + params->preamble_pattern_len <= bitbuffer->bits_per_row[i]) {
+                    unsigned match = 1;
+                    for (unsigned p = 0; p < params->preamble_pattern_len; ++p) {
+                        if (bit_at(bitbuffer->bb[i], test_pos + p) != bit_at(params->preamble_pattern_bits, p)) {
+                            match = 0;
+                            break;
+                        }
+                    }
+                    if (!match) {
+                        break;
+                    }
+                    actual_repeats++;
+                    test_pos += params->preamble_pattern_len;
+                    if (params->preamble_pattern_max_repeats > 0 && actual_repeats >= params->preamble_pattern_max_repeats) {
+                        break;
+                    }
+                }
+                // Remove the preamble pattern and everything before it
+                pos += actual_repeats * params->preamble_pattern_len;
+                // TODO: refactor to bitbuffer_shift_row()
+                unsigned len = bitbuffer->bits_per_row[i] - pos;
+                bitbuffer_t tmp = {0};
+                bitbuffer_extract_bytes(bitbuffer, i, pos, tmp.bb[0], len);
+                memcpy(bitbuffer->bb[i], tmp.bb[0], (len + 7) / 8);
+                bitbuffer->bits_per_row[i] = len;
+            }
+        }
+        if (!match_count)
+            return DECODE_FAIL_SANITY;
+    }
+
+    // discard unless match_sync found (required sync word)
+    if (params->match_sync_len) {
+        r = -1;
+        match_count = 0;
+        for (i = 0; i < bitbuffer->num_rows; i++) {
+            unsigned pos = bitbuffer_search(bitbuffer, i, 0, params->match_sync_bits, params->match_sync_len);
+            if (pos < bitbuffer->bits_per_row[i]) {
+                if (r < 0)
+                    r = i;
+                match_count++;
+                pos += params->match_sync_len;
                 // TODO: refactor to bitbuffer_shift_row()
                 unsigned len = bitbuffer->bits_per_row[i] - pos;
                 bitbuffer_t tmp = {0};
@@ -650,6 +737,24 @@ static void help(void)
             "\t\t<hex> is colon-separated hex bytes without 0x prefix (e.g. AA:BBCC:DD)\n"
             "\tmatch=<bits> : only match if the <bits> are found\n"
             "\tpreamble=<bits> : match and align at the <bits> preamble\n"
+            "\t\t<bits> format: {<bit_count>}<hex_value> or <hex_value> (e.g. {16}2dd4 or 2dd4)\n"
+            "\tpreamble_pattern=<pattern>:<min_repeats>[:<max_repeats>] : match repetitive pattern\n"
+            "\t\tSearches for consecutive repetitions of a binary pattern.\n"
+            "\t\tThe search starts from the beginning and automatically skips leading bits\n"
+            "\t\tthat don't match the pattern.\n"
+            "\t\t<pattern> is binary string containing only '0' and '1' (e.g., \"110\" or \"1\")\n"
+            "\t\t<min_repeats> is minimum number of consecutive repetitions required (>= 1)\n"
+            "\t\t<max_repeats> is optional maximum number of repetitions (0 = unlimited)\n"
+            "\t\tExamples:\n"
+            "\t\t  preamble_pattern=1:5        - Find at least 5 consecutive '1' bits\n"
+            "\t\t  preamble_pattern=110:3       - Find at least 3 repetitions of \"110\"\n"
+            "\t\t  preamble_pattern=110:3:5    - Find 3 to 5 repetitions of \"110\"\n"
+            "\t\t  preamble_pattern=1010:2     - Find at least 2 repetitions of \"1010\"\n"
+            "\t\tNote: Pattern is searched in RAW bitstream before decoding operations.\n"
+            "\t\tFor signal \"1110110110\" with pattern \"110\", it will find pattern\n"
+            "\t\tstarting at position 1 (after first '1'), matching 3 repetitions.\n"
+            "\tmatch_sync=<bits> : match and align at the <bits> sync word (required, searches anywhere in buffer)\n"
+            "\t\t<bits> format: {<bit_count>}<hex_value> or <hex_value> (e.g. {16}2dd4 or 2dd4)\n"
             "\tmatch_offset=<offset>@<bits> : only match if <bits> are found at <offset>\n"
             "\t\t<offset> is bit position from start (positive) or from end (negative)\n"
             "\t\t<bits> is a row spec of {<bit count>}<bits as hex number>\n"
@@ -742,18 +847,18 @@ static unsigned parse_modulation(char const *str)
     return 0;
 }
 
-// used for match, preamble, getter, limited to 1024 bits (128 byte).
+// used for match, preamble, match_sync, getter, limited to 1024 bits (128 byte).
 static unsigned parse_bits(const char *code, uint8_t *bitrow)
 {
     bitbuffer_t bits = {0};
     bitbuffer_parse(&bits, code);
     if (bits.num_rows != 1) {
-        fprintf(stderr, "Bad flex spec, \"match\", \"preamble\", and getter mask need exactly one bit row (%d found)!\n", bits.num_rows);
+        fprintf(stderr, "Bad flex spec, \"match\", \"preamble\", \"match_sync\", and getter mask need exactly one bit row (%d found)!\n", bits.num_rows);
         usage();
     }
     unsigned len = bits.bits_per_row[0];
     if (len > 1024) {
-        fprintf(stderr, "Bad flex spec, \"match\", \"preamble\", and getter mask may have up to 1024 bits (%u found)!\n", len);
+        fprintf(stderr, "Bad flex spec, \"match\", \"preamble\", \"match_sync\", and getter mask may have up to 1024 bits (%u found)!\n", len);
         usage();
     }
     memcpy(bitrow, bits.bb[0], (len + 7) / 8);
@@ -776,6 +881,137 @@ static uint32_t parse_symbol(const char *code)
     }
     uint8_t *b = bits.bb[0];
     return ((uint32_t)b[0] << 24) | (b[1] << 16) | (b[2] << 8) | (b[3] << 0) | len;
+}
+
+// Parse binary pattern string (e.g., "110" -> bits 1,1,0)
+// Returns the number of bits parsed, stores bits in bitrow
+// The pattern must contain only '0' and '1' characters.
+// Whitespace is ignored.
+// Examples:
+//   "1"     -> single bit 1
+//   "110"   -> three bits: 1, 1, 0
+//   "1010"  -> four bits: 1, 0, 1, 0
+static unsigned parse_binary_pattern(const char *code, uint8_t *bitrow)
+{
+    if (!code || !*code) {
+        fprintf(stderr, "Bad flex spec, \"preamble_pattern\" requires a binary pattern!\n");
+        usage();
+    }
+
+    bitbuffer_t bits = {0};
+    bitbuffer_clear(&bits);
+
+    for (const char *c = code; *c; ++c) {
+        if (*c == ' ') {
+            continue;
+        }
+        else if (*c == '0') {
+            bitbuffer_add_bit(&bits, 0);
+        }
+        else if (*c == '1') {
+            bitbuffer_add_bit(&bits, 1);
+        }
+        else {
+            fprintf(stderr, "Bad flex spec, \"preamble_pattern\" must contain only '0' and '1' characters (found '%c')!\n", *c);
+            usage();
+        }
+    }
+
+    if (bits.num_rows != 1 || bits.bits_per_row[0] == 0) {
+        fprintf(stderr, "Bad flex spec, \"preamble_pattern\" must have at least one bit!\n");
+        usage();
+    }
+
+    unsigned len = bits.bits_per_row[0];
+    if (len > 1024) {
+        fprintf(stderr, "Bad flex spec, \"preamble_pattern\" may have up to 1024 bits (%u found)!\n", len);
+        usage();
+    }
+
+    memcpy(bitrow, bits.bb[0], (len + 7) / 8);
+    return len;
+}
+
+// Helper function to get a bit from a byte array
+static uint8_t bit_at(const uint8_t *bytes, unsigned bit)
+{
+    return (uint8_t)(bytes[bit >> 3] >> (7 - (bit & 7)) & 1);
+}
+
+// Search for repetitive pattern in bitbuffer
+// Searches sequentially from start position, trying each bit position until finding
+// a location where the pattern repeats at least min_repeats times.
+// 
+// The search will skip any leading bits that don't match the pattern.
+// For example, searching for "110" in "1110110110" will find the pattern
+// starting at position 1 (after the first '1'), finding 3 repetitions.
+//
+// Parameters:
+//   bitbuffer: The bitbuffer to search in
+//   row: Row index to search
+//   start: Starting bit position (usually 0)
+//   pattern: The pattern bits to search for
+//   pattern_len: Length of pattern in bits
+//   min_repeats: Minimum number of consecutive repetitions required
+//   max_repeats: Maximum number of repetitions to count (0 = unlimited)
+//
+// Returns:
+//   The bit position where the repetitive pattern starts, or len if not found
+//
+// Examples:
+//   Signal "1110110110", pattern "110", min_repeats=1:
+//     - Finds pattern at position 1, counts 3 repetitions (positions 1, 4, 7)
+//     - Returns position 1
+//
+//   Signal "000110110", pattern "110", min_repeats=2:
+//     - Finds pattern at position 3, counts 2 repetitions (positions 3, 6)
+//     - Returns position 3
+static unsigned bitbuffer_search_repetitive_pattern(bitbuffer_t *bitbuffer, unsigned row, unsigned start,
+        const uint8_t *pattern, unsigned pattern_len, unsigned min_repeats, unsigned max_repeats)
+{
+    uint8_t *bits = bitbuffer->bb[row];
+    unsigned len  = bitbuffer->bits_per_row[row];
+    unsigned ipos = start;
+
+    while (ipos < len) {
+        unsigned repeats = 0;
+        unsigned test_pos = ipos;
+
+        // Try to match as many repetitions as possible
+        while (test_pos + pattern_len <= len) {
+            // Check if pattern matches at current position
+            unsigned match = 1;
+            for (unsigned p = 0; p < pattern_len; ++p) {
+                if (bit_at(bits, test_pos + p) != bit_at(pattern, p)) {
+                    match = 0;
+                    break;
+                }
+            }
+
+            if (!match) {
+                break;
+            }
+
+            repeats++;
+            test_pos += pattern_len;
+
+            // If we have a max_repeats limit and reached it, stop
+            if (max_repeats > 0 && repeats >= max_repeats) {
+                break;
+            }
+        }
+
+        // Check if we found enough repetitions
+        if (repeats >= min_repeats) {
+            return ipos;
+        }
+
+        // Move to next position
+        ipos++;
+    }
+
+    // Not found
+    return len;
 }
 
 static const char *parse_map(const char *arg, struct flex_get *getter)
@@ -949,6 +1185,72 @@ r_device *flex_create_device(char *spec)
 
         else if (!strcasecmp(key, "preamble"))
             params->preamble_len = parse_bits(val, params->preamble_bits);
+
+        else if (!strcasecmp(key, "preamble_pattern")) {
+            // Parse format: "pattern:min_repeats[:max_repeats]"
+            // Example: "110:3" or "110:3:5" or "1:5"
+            //
+            // The pattern is specified in binary (only '0' and '1' characters).
+            // The search will find consecutive repetitions of this pattern.
+            // Leading bits that don't match will be skipped automatically.
+            //
+            // Examples:
+            //   preamble_pattern=1:5        - Find at least 5 consecutive '1' bits
+            //   preamble_pattern=110:3     - Find at least 3 repetitions of "110"
+            //   preamble_pattern=110:3:5    - Find 3 to 5 repetitions of "110"
+            //   preamble_pattern=1010:2    - Find at least 2 repetitions of "1010"
+            //
+            // Note: This searches in the RAW bitstream before any decoding operations
+            // (like decode_dm, decode_mc, etc.) are applied.
+            char *val_copy = strdup(val);
+            if (!val_copy)
+                FATAL_STRDUP("preamble_pattern");
+            
+            char *pattern_str = val_copy;
+            char *colon1 = strchr(pattern_str, ':');
+            if (!colon1) {
+                fprintf(stderr, "Bad flex spec, \"preamble_pattern\" requires format \"pattern:min_repeats[:max_repeats]\"!\n");
+                free(val_copy);
+                usage();
+            }
+            *colon1 = '\0';
+            
+            char *min_str = colon1 + 1;
+            char *colon2 = strchr(min_str, ':');
+            char *max_str = NULL;
+            if (colon2) {
+                *colon2 = '\0';
+                max_str = colon2 + 1;
+            }
+            
+            // Parse the binary pattern
+            params->preamble_pattern_len = parse_binary_pattern(pattern_str, params->preamble_pattern_bits);
+            
+            // Parse min_repeats
+            params->preamble_pattern_min_repeats = parse_atoiv(min_str, 1, "preamble_pattern min_repeats: ");
+            if (params->preamble_pattern_min_repeats == 0) {
+                fprintf(stderr, "Bad flex spec, \"preamble_pattern\" min_repeats must be at least 1!\n");
+                free(val_copy);
+                usage();
+            }
+            
+            // Parse max_repeats (optional)
+            params->preamble_pattern_max_repeats = 0; // 0 means unlimited
+            if (max_str) {
+                params->preamble_pattern_max_repeats = parse_atoiv(max_str, 0, "preamble_pattern max_repeats: ");
+                if (params->preamble_pattern_max_repeats > 0 && 
+                    params->preamble_pattern_max_repeats < params->preamble_pattern_min_repeats) {
+                    fprintf(stderr, "Bad flex spec, \"preamble_pattern\" max_repeats must be >= min_repeats!\n");
+                    free(val_copy);
+                    usage();
+                }
+            }
+            
+            free(val_copy);
+        }
+
+        else if (!strcasecmp(key, "match_sync"))
+            params->match_sync_len = parse_bits(val, params->match_sync_bits);
 
         else if (!strcasecmp(key, "match_offset")) {
             // Parse format: "offset@<bits>" where offset can be positive (from start) or negative (from end)
@@ -1124,8 +1426,8 @@ r_device *flex_create_device(char *spec)
         fprintf(stderr, "Adding flex decoder \"%s\"\n", params->name);
         fprintf(stderr, "\tmodulation=%u, short_width=%.0f, long_width=%.0f, reset_limit=%.0f\n",
                 dev->modulation, dev->short_width, dev->long_width, dev->reset_limit);
-        fprintf(stderr, "\tmin_rows=%u, min_bits=%u, min_repeats=%u, invert=%u, reflect=%u, match_len=%u, preamble_len=%u\n",
-                params->min_rows, params->min_bits, params->min_repeats, params->invert, params->reflect, params->match_len, params->preamble_len);
+        fprintf(stderr, "\tmin_rows=%u, min_bits=%u, min_repeats=%u, invert=%u, reflect=%u, match_len=%u, preamble_len=%u, preamble_pattern_len=%u, match_sync_len=%u\n",
+                params->min_rows, params->min_bits, params->min_repeats, params->invert, params->reflect, params->match_len, params->preamble_len, params->preamble_pattern_len, params->match_sync_len);
     */
 
     free(spec);

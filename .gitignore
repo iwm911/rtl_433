@@ -1,5 +1,16 @@
-# CMake out-of-tree builds
+# CMake build files
 build*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+cmake_uninstall.cmake
+CTestTestfile.cmake
+DartConfiguration.tcl
+Makefile
+Testing/
+# Generated cmake files in subdirectories
+**/cmake_install.cmake
+**/CTestTestfile.cmake
 
 # IDE files
 .cproject
@@ -25,6 +36,7 @@ cmake-build-debug/
 # Development files
 /_*/
 /rtl_433_tests
+tests/
 
 # File manager files
 .DS_Store
