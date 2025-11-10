@@ -15,6 +15,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Forward declarations
+static uint8_t bit_at(const uint8_t *bytes, unsigned bit);
+static unsigned bitbuffer_search_repetitive_pattern(bitbuffer_t *bitbuffer, unsigned row, unsigned start,
+        const uint8_t *pattern, unsigned pattern_len, unsigned min_repeats, unsigned max_repeats);
+
 static inline int bit(const uint8_t *bytes, unsigned b)
 {
     return bytes[b >> 3] >> (7 - (b & 7)) & 1;
