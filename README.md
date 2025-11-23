@@ -180,7 +180,7 @@ See [CONTRIBUTING.md](./docs/CONTRIBUTING.md).
     [92]  FT-004-B Temperature Sensor
     [93]  Ford Car Key
     [94]  Philips outdoor temperature sensor (type AJ3650)
-    [95]  Schrader TPMS EG53MA4, PA66GF35
+    [95]  Schrader TPMS EG53MA4, Saab, Opel, Vauxhall, Chevrolet
     [96]  Nexa
     [97]  ThermoPro TP08/TP12/TP20 thermometer
     [98]  GE Color Effects
@@ -372,6 +372,10 @@ See [CONTRIBUTING.md](./docs/CONTRIBUTING.md).
     [284]  Baldr E0666TH Thermo-Hygrometer
     [285]  bm5-v2 12V Battery Monitor
     [286]  Universal (Reverseable) 24V Fan Controller
+    [287]  Fine Offset Electronics WS85 weather station
+    [288]  Oria WA150KM freezer and fridge thermometer
+    [289]  Voltcraft EnergyCount 3000 (ec3k)
+    [290]  Orion Endpoint from Badger Meter, GIF2020OCECNA, water meter, hopping from 904.4 Mhz to 924.6Mhz (-s 1600k)
 
 * Disabled by default, use -R n or a conf file to enable
 

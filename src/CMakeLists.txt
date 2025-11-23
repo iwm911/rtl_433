@@ -96,6 +96,7 @@ add_library(r_433 STATIC
     devices/directv.c
     devices/dish_remote_6_3.c
     devices/dsc.c
+    devices/ec3k.c
     devices/ecodhome.c
     devices/ecowitt.c
     devices/efergy_e2_classic.c
@@ -124,6 +125,7 @@ add_library(r_433 STATIC
     devices/fineoffset_wh55.c
     devices/fineoffset_wn34.c
     devices/fineoffset_ws80.c
+    devices/fineoffset_ws85.c
     devices/fineoffset_ws90.c
     devices/flex.c
     devices/flowis.c
@@ -202,6 +204,7 @@ add_library(r_433 STATIC
     devices/oregon_scientific.c
     devices/oregon_scientific_sl109h.c
     devices/oregon_scientific_v1.c
+    devices/oria_wa150km.c
     devices/philips_aj3650.c
     devices/philips_aj7010.c
     devices/proflame2.c
